@@ -99,16 +99,23 @@
                :append-to-body="true"
                :close-on-click-modal="false"
                class="index-push"
+               custom-class="index-push-dialog"
+               @close="handlePushClose"
                center>
-      <div style="display: flex;align-items: center;flex-direction: column">
+      <div class="push-content">
+        <div class="push-tag">DAILY PICK</div>
         <div class="push-title">
           {{ push['标题'] }}
+        </div>
+        <div class="push-desc">
+          今日精选已为你准备好，点击即可直达。
         </div>
 
         <el-image class="push-el-image"
                   lazy
                   :src="push['封面']"
                   fit="cover">
+          <div slot="error" class="push-image-error">封面加载失败</div>
         </el-image>
 
         <div class="push-button" @click="pushUrl(push['链接'])">
@@ -158,6 +165,9 @@
   const sortArticle = () => import( "./common/sortArticle");
   const myFooter = () => import( "./common/myFooter");
   const myAside = () => import( "./myAside");
+  const PUSH_STATE_KEY = "pushNotification_state_v2";
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  const CLICK_COOLDOWN_MS = 3 * ONE_DAY_MS;
 
   export default {
     components: {
@@ -172,6 +182,8 @@
       return {
         pushDialogVisible: false,
         push: {},
+        pushDialogTimer: null,
+        pushActionLock: false,
         showAside: true,
         indexType: 1,
         printerInfo: "你看对面的青山多漂亮",
@@ -197,7 +209,11 @@
       };
     },
 
-    watch: {},
+    watch: {
+      pushNotices() {
+        this.schedulePushCheck();
+      }
+    },
 
     created() {
       this.getGuShi();
@@ -207,22 +223,112 @@
     computed: {
       sortInfo() {
         return this.$store.state.sortInfo;
+      },
+      pushNotices() {
+        return this.$store.state.webInfo.notices;
       }
     },
 
     mounted() {
-      setTimeout(() => {
-        this.push = this.$common.pushNotification(this.$store.state.webInfo.notices, false);
-        if(!this.$common.isEmpty(this.push)) {
-          if("0" !== localStorage.getItem("showPushNotification_" + this.push['链接'])) {
-            this.pushDialogVisible = true;
-            localStorage.setItem("showPushNotification_" + this.push['链接'], "0");
-          }
-        }
-      }, 2000);
+      this.schedulePushCheck();
+    },
+
+    destroyed() {
+      if (this.pushDialogTimer) {
+        clearTimeout(this.pushDialogTimer);
+      }
     },
 
     methods: {
+      schedulePushCheck() {
+        if (this.pushDialogVisible) {
+          return;
+        }
+        if (this.pushDialogTimer) {
+          clearTimeout(this.pushDialogTimer);
+        }
+        this.pushDialogTimer = setTimeout(() => {
+          this.tryShowPushDialog();
+        }, 2200);
+      },
+      tryShowPushDialog() {
+        const nextPush = this.$common.pushNotification(this.$store.state.webInfo.notices, false);
+        if (!this.isValidPush(nextPush)) {
+          return;
+        }
+
+        this.push = nextPush;
+        if (this.shouldShowPush(nextPush)) {
+          this.pushDialogVisible = true;
+          this.recordPushAction("show", nextPush);
+        }
+      },
+      isValidPush(pushData) {
+        if (this.$common.isEmpty(pushData)) {
+          return false;
+        }
+        return !this.$common.isEmpty(pushData['标题']) &&
+          !this.$common.isEmpty(pushData['链接']);
+      },
+      buildPushFingerprint(pushData) {
+        const title = pushData['标题'] || "";
+        const cover = pushData['封面'] || "";
+        const link = pushData['链接'] || "";
+        return [title, cover, link].join("|");
+      },
+      readPushState() {
+        try {
+          const state = JSON.parse(localStorage.getItem(PUSH_STATE_KEY) || "{}");
+          return Object.prototype.toString.call(state) === "[object Object]" ? state : {};
+        } catch (e) {
+          return {};
+        }
+      },
+      writePushState(state) {
+        localStorage.setItem(PUSH_STATE_KEY, JSON.stringify(state));
+      },
+      shouldShowPush(pushData) {
+        const fingerprint = this.buildPushFingerprint(pushData);
+        const state = this.readPushState();
+        const now = Date.now();
+
+        if (this.$common.isEmpty(state.fingerprint) || state.fingerprint !== fingerprint) {
+          return true;
+        }
+
+        if (state.lastAction === "click" && now - (state.lastActionAt || 0) < CLICK_COOLDOWN_MS) {
+          return false;
+        }
+
+        return now - (state.lastShownAt || 0) >= ONE_DAY_MS;
+      },
+      recordPushAction(action, pushData = this.push) {
+        const now = Date.now();
+        const prevState = this.readPushState();
+        const nextState = {
+          fingerprint: this.buildPushFingerprint(pushData),
+          title: pushData['标题'] || "",
+          link: pushData['链接'] || "",
+          lastAction: action,
+          lastActionAt: now,
+          lastShownAt: prevState.lastShownAt || 0
+        };
+
+        if (action === "show") {
+          nextState.lastShownAt = now;
+        } else if (!nextState.lastShownAt) {
+          nextState.lastShownAt = now;
+        }
+
+        this.writePushState(nextState);
+      },
+      handlePushClose() {
+        if (this.pushActionLock) {
+          this.pushActionLock = false;
+          return;
+        }
+        this.recordPushAction("close");
+      },
       async selectSort(sort) {
         this.searchContext = null;
         this.pagination = {
@@ -342,7 +448,13 @@
         });
       },
       pushUrl(url) {
-        window.open(url);
+        if (this.$common.isEmpty(url)) {
+          return;
+        }
+        this.pushActionLock = true;
+        this.recordPushAction("click");
+        this.pushDialogVisible = false;
+        window.open(url, "_blank");
       },
       getGuShi() {
         let that = this;
@@ -617,39 +729,167 @@
     box-shadow: 0 0 5px var(--themeBackground);
   }
 
+  :deep(.index-push-dialog) {
+    width: min(760px, 92vw) !important;
+    border-radius: 28px;
+    border: 1px solid rgba(255, 255, 255, 0.46);
+    background:
+      linear-gradient(165deg, rgba(255, 255, 255, 0.5) 0%, rgba(242, 248, 255, 0.26) 100%),
+      radial-gradient(circle at 12% -12%, rgba(95, 174, 255, 0.34), transparent 52%),
+      radial-gradient(circle at 100% 120%, rgba(255, 185, 126, 0.28), transparent 42%);
+    box-shadow:
+      0 28px 60px rgba(22, 34, 58, 0.28),
+      inset 0 1px 0 rgba(255, 255, 255, 0.68);
+    backdrop-filter: blur(18px) saturate(140%);
+    overflow: hidden;
+  }
+
+  :deep(.index-push-dialog .el-dialog__header) {
+    padding: 22px 28px 12px;
+  }
+
+  :deep(.index-push-dialog .el-dialog__title) {
+    font-size: 23px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    color: #1a283f;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+
+  :deep(.index-push-dialog .el-dialog__headerbtn .el-dialog__close) {
+    color: #557090;
+    transition: transform 0.25s ease, color 0.25s ease;
+  }
+
+  :deep(.index-push-dialog .el-dialog__headerbtn:hover .el-dialog__close) {
+    color: #26456b;
+    transform: scale(1.08);
+  }
+
+  :deep(.index-push-dialog .el-dialog__body) {
+    padding: 6px 24px 26px;
+  }
+
+  .push-content {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    border-radius: 20px;
+    padding: 20px 14px 6px;
+    background: linear-gradient(150deg, rgba(255, 255, 255, 0.44), rgba(255, 255, 255, 0.16));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.6),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  .push-content::after {
+    content: "";
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 14px;
+    height: 18px;
+    background: radial-gradient(circle, rgba(40, 67, 105, 0.25), rgba(40, 67, 105, 0));
+    filter: blur(8px);
+    z-index: -1;
+  }
+
+  .push-tag {
+    padding: 5px 12px;
+    border-radius: 99px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #2b4f78;
+    background: linear-gradient(120deg, rgba(255, 255, 255, 0.9), rgba(226, 240, 255, 0.78));
+    border: 1px solid rgba(126, 169, 216, 0.42);
+    box-shadow: 0 8px 20px rgba(72, 108, 155, 0.2);
+  }
+
   .push-title {
-    font-weight: bold;
-    font-size: 20px;
+    margin-top: 12px;
+    text-align: center;
+    font-weight: 800;
+    font-size: 26px;
+    color: #1f3554;
+    letter-spacing: 0.02em;
+  }
+
+  .push-desc {
+    margin-top: 8px;
+    margin-bottom: 18px;
+    color: #516785;
+    font-size: 14px;
   }
 
   .push-el-image {
-    width: 80%;
-    min-height: 100px;
-    max-height: 400px;
-    border-radius: 15px;
-    margin-top: 20px;
-    margin-bottom: 30px;
+    width: min(92%, 620px);
+    min-height: 140px;
+    max-height: 380px;
+    border-radius: 18px;
+    margin-bottom: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow:
+      0 18px 34px rgba(15, 34, 56, 0.26),
+      0 6px 12px rgba(15, 34, 56, 0.15);
+    overflow: hidden;
+  }
+
+  .push-image-error {
+    width: 100%;
+    min-height: 140px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #5f6f84;
+    background: linear-gradient(135deg, rgba(225, 234, 247, 0.92), rgba(203, 217, 235, 0.84));
   }
 
   .push-button {
     position: relative;
-    background: var(--lightGreen);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    background: linear-gradient(128deg, #2a9ef6, #4c74ff 54%, #6a62ff);
     cursor: pointer;
-    width: 230px;
-    border-radius: 2rem;
-    line-height: 35px;
-    color: var(--white);
+    width: 248px;
+    border-radius: 999px;
+    line-height: 44px;
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    box-shadow:
+      0 16px 28px rgba(56, 87, 178, 0.34),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+  }
+
+  .push-button:hover {
+    transform: translateY(-2px);
+    box-shadow:
+      0 18px 30px rgba(41, 76, 165, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.56);
   }
 
   .push-button-title {
-    margin-left: 20px;
-    font-weight: bold;
+    margin-left: 24px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
   }
 
   .push-button-car {
     position: absolute;
-    margin-left: 55px;
-    animation: passing 4s linear infinite;
+    right: 18px;
+    animation: passing 2.8s ease-in-out infinite;
+  }
+
+  @keyframes passing {
+    0%, 100% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(7px);
+    }
   }
 
   @media screen and (max-width: 1100px) {
@@ -681,6 +921,36 @@
 
     h1 {
       font-size: 35px;
+    }
+
+    :deep(.index-push-dialog .el-dialog__header) {
+      padding: 18px 16px 10px;
+    }
+
+    :deep(.index-push-dialog .el-dialog__title) {
+      font-size: 20px;
+    }
+
+    :deep(.index-push-dialog .el-dialog__body) {
+      padding: 6px 12px 20px;
+    }
+
+    .push-title {
+      font-size: 22px;
+    }
+
+    .push-desc {
+      font-size: 13px;
+      text-align: center;
+    }
+
+    .push-button {
+      width: 220px;
+      line-height: 40px;
+    }
+
+    .push-button-title {
+      margin-left: 20px;
     }
   }
 </style>

@@ -4,23 +4,40 @@ import store from '../store';
 
 export default {
   pushNotification(notices, isNotification) {
-    if (isNotification) {
-      if (this.isEmpty(notices)) {
-        return [];
-      } else {
-        return notices.filter(f => "推送标题：" !== f.substr(0, 5) &&
-          "推送封面：" !== f.substr(0, 5) &&
-          "推送链接：" !== f.substr(0, 5));
+    const parsePushNotice = (notice) => {
+      if (typeof notice !== "string") {
+        return null;
       }
+      const text = notice.trim();
+      const matched = text.match(/^(推送标题|推送封面|推送链接)\s*[：:]\s*(.*)$/);
+      if (!matched) {
+        return null;
+      }
+      return {
+        type: matched[1],
+        value: (matched[2] || "").trim()
+      };
+    };
+
+    if (!Array.isArray(notices) || notices.length === 0) {
+      return isNotification ? [] : {};
+    }
+
+    if (isNotification) {
+      return notices.filter(notice => !parsePushNotice(notice));
     } else {
       let push = {};
       notices.forEach(notice => {
-        if ("推送标题：" === notice.substr(0, 5)) {
-          push['标题'] = notice.substr(5);
-        } else if ("推送封面：" === notice.substr(0, 5)) {
-          push['封面'] = notice.substr(5);
-        } else if ("推送链接：" === notice.substr(0, 5)) {
-          push['链接'] = notice.substr(5);
+        const pushNotice = parsePushNotice(notice);
+        if (!pushNotice) {
+          return;
+        }
+        if ("推送标题" === pushNotice.type) {
+          push['标题'] = pushNotice.value;
+        } else if ("推送封面" === pushNotice.type) {
+          push['封面'] = pushNotice.value;
+        } else if ("推送链接" === pushNotice.type) {
+          push['链接'] = pushNotice.value;
         }
       });
       return push;

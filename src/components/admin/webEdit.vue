@@ -60,7 +60,7 @@
         <el-form-item label="提示" prop="waifuJson">
           <div class="waifu-editor-row">
             <el-input :disabled="disabled" :rows="6" type="textarea" v-model="webInfo.waifuJson"></el-input>
-            <iconify-icon icon="mdi:pencil" my-icon" @click="disabled = !disabled"></i>
+            <iconify-icon icon="mdi:pencil" @click="disabled = !disabled"></iconify-icon>
           </div>
         </el-form-item>
       </el-form>
