@@ -101,7 +101,7 @@
 
         <div class="article-info-news"
              @click="weiYanDialogVisible = true"
-             v-if="!$common.isEmpty($store.state.currentUser) && $store.state.currentUser.id === article.userId">
+             v-if="canAccess">
           <svg width="30" height="30" viewBox="0 0 1024 1024">
             <path d="M0 0h1024v1024H0V0z" fill="#202425" opacity=".01"></path>
             <path
@@ -327,6 +327,22 @@
     destroyed() {
       window.removeEventListener("scroll", this.onScrollPage);
     },
+    computed: {
+      canAccess() {
+        const { currentUser, currentAdmin } = this.$store.state;
+        const isNotEmpty = !this.$common.isEmpty; // 假设你有这个反向方法，或者用 !isEmpty
+
+        // 1. 如果是管理员，直接允许
+        if (!this.$common.isEmpty(currentAdmin)) return true;
+
+        // 2. 如果是当前用户，且 ID 匹配，允许
+        if (!this.$common.isEmpty(currentUser) && currentUser.id === this.$constant.userId) {
+          return true;
+        }
+
+        return false;
+      }
+  },
     watch: {
     },
     methods: {

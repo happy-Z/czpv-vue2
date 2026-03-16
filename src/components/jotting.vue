@@ -21,7 +21,7 @@
         </div>
         <button class="publish-btn"
                 @click="weiYanDialogVisible = true"
-                v-if="!$common.isEmpty($store.state.currentUser) && $store.state.currentUser.id === $constant.userId"
+                v-if="canAccess"
                 title="发布新的随笔">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -192,7 +192,22 @@ export default {
     }
   },
 
-  computed: {},
+  computed: {
+    canAccess() {
+    const { currentUser, currentAdmin } = this.$store.state;
+    const isNotEmpty = !this.$common.isEmpty; // 假设你有这个反向方法，或者用 !isEmpty
+
+    // 1. 如果是管理员，直接允许
+    if (!this.$common.isEmpty(currentAdmin)) return true;
+
+    // 2. 如果是当前用户，且 ID 匹配，允许
+    if (!this.$common.isEmpty(currentUser) && currentUser.id === this.$constant.userId) {
+      return true;
+    }
+
+    return false;
+  }
+  },
 
   watch: {},
 
